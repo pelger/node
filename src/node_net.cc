@@ -1333,12 +1333,10 @@ static void Dump(EV_P_ ev_prepare *watcher, int revents) {
       Local<Object> buf_object;
 
       if (data_v->IsString()) {
-        Local<String> data = data_v->ToString();
         // FIXME This is suboptimal - Buffer::New is slow.
         // Also insert v8::String::Pointers() hack here.
-        Buffer* buf = Buffer::New(data);
-        bucket->Set(data_sym, buf->handle_);
-        buf_object = Local<Object>::New(buf->handle_);
+        buf_object = Buffer::New(data_v->ToString());
+        bucket->Set(data_sym, buf_object);
       } else if (Buffer::HasInstance(data_v)) {
         buf_object = data_v->ToObject();
       } else {
