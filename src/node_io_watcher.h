@@ -33,6 +33,8 @@ class IOWatcher : ObjectWrap {
  private:
   static void Callback(EV_P_ ev_io *watcher, int revents);
 
+  static void Dump(EV_P_ ev_prepare *watcher, int revents);
+
   void Start();
   void Stop();
 

@@ -3,6 +3,7 @@
 
 #include <node.h>
 #include <node_buffer.h>
+#include <node_io_watcher.h>
 
 #include <string.h>
 #include <stdlib.h>
@@ -40,9 +41,6 @@
 namespace node {
 
 using namespace v8;
-
-static ev_prepare dumper;
-static Persistent<Object> dump_queue;
 
 static Persistent<String> errno_symbol;
 static Persistent<String> syscall_symbol;
@@ -1288,133 +1286,6 @@ static Handle<Value> CreateErrnoException(const Arguments& args) {
 }
 
 
-#define KB 1024
-
-static void Dump(EV_P_ ev_prepare *watcher, int revents) {
-  assert(revents == EV_PREPARE);
-  assert(watcher == &dumper);
-
-  HandleScope scope;
-
-
-#define IOV_SIZE 10000
-  static struct iovec iov[IOV_SIZE];
-
-  // Loop over all 'fd objects' in the dump queue. Each object stands for a
-  // socket that has stuff to be written out.
-  Local<Value> writer_node_v;
-  Local<Object> writer_node; 
-  for (writer_node_v = dump_queue->Get(next_sym);
-       !writer_node_v.IsEmpty();
-       writer_node_v = writer_node->Get(next_sym)) {
-    writer_node = writer_node_v->ToObject();
-
-    // Number of items we've stored in iov
-    int iovcnt = 0;
-    // Number of bytes we've stored in iov
-    size_t to_write = 0;
-
-
-    // Offset is only so large as the first buffer of data
-    // this occurs when a previous writev could not entirely flush
-    // a bucket.
-    size_t offset = writer_node->Get(offset_sym)->Uint32Value();
-
-    // Loop over all the buckets for this particular socket.
-    Local<Value> bucket_v;
-    Local<Object> bucket;
-    bool first = true;
-    for (bucket_v = write_node->Get(queue_sym);
-         !bucket_v.IsEmpty() && to_write < 64*KB && iovcnt < IOV_SIZE;
-         bucket_v = bucket->Get(next_sym)) {
-      bucket = bucket_v->ToObject();
-
-      Local<Value> data_v = bucket->Get(data_sym);
-      // net.js will be setting this 'data' value. We can ensure that it is
-      // never empty.
-      assert(!data_v.IsEmpty());
-
-      Local<Object> buf_object;
-
-      if (data_v->IsString()) {
-        // FIXME This is suboptimal - Buffer::New is slow.
-        // Also insert v8::String::Pointers() hack here.
-        buf_object = Buffer::New(data_v->ToString());
-        bucket->Set(data_sym, buf_object);
-      } else if (Buffer::HasInstance(data_v)) {
-        buf_object = data_v->ToObject();
-      } else {
-        assert(0);
-      }
-
-      size_t l = Buffer::Length(buf_object);
-
-      if (first /* ugly */) {
-        assert(offset < l);
-        iov[iovcnt].iov_base = Buffer::Data(buf_object) + offset;
-        iov[iovcnt].iov_len = l - offset;
-      } else {
-        iov[iovcnt].iov_base = Buffer::Data(buf_object);
-        iov[iovcnt].iov_len = l;
-      }
-
-      first = false; // ugly
-    }
-
-    ssize_t written = writev(fd, iov, iovcnt);
-
-    if (written < 0) {
-      switch (errno) {
-        case EPIPE:
-          // What do to do with EPIPE? Somehow we should be emitting an
-          // error event on the socket object...
-          break;
-
-        case EAGAIN:
-          // TODO Need to enable the write watcher.
-          continue;
-
-        default:
-          perror("writev");
-          continue;
-      }
-    }
-
-    // Now drop the buckets that have been written.
-    for (bucket_v = write_node->Get(queue_sym);
-         !bucket_v.IsEmpty();
-         bucket_v = bucket->Get(next_sym)) {
-      bucket = bucket_v->ToObject();
-
-      Local<Value> data_v = bucket->Get(data_sym);
-      assert(!data_v.IsEmpty());
-
-      size_t bucket_len = data_v->IsString()
-        ? bucket->Get(length_sym)->Uint32Value()
-        : Buffer::Length(data_v->ToObject());
-
-      if (offset + written < bucket_len) {
-        // we have not written the entire bucket
-        write_node->Set(offset_sym, Integer::NewFromUnsigned(offset + written));
-        break;
-      } else {
-        // We have written the entire bucket, discard it.
-        offset = 0;
-        written -= bucket_len;
-        write_node->Set(queue_sym, bucket->Get(next_sym));
-      }
-    }
-
-    if ( ! write_node->Get(queue_sym)->IsUndefined() ) {
-      // current->next = new_write_queue->next
-     
-      // new_write_queue->next = current
-    }
-
-  }
-}
-
-
 void InitNet(Handle<Object> target) {
   HandleScope scope;
 
@@ -1457,14 +1328,6 @@ void InitNet(Handle<Object> target) {
   size_symbol           = NODE_PSYMBOL("size");
   address_symbol        = NODE_PSYMBOL("address");
   port_symbol           = NODE_PSYMBOL("port");
-
-
-  ev_prepare_init(&dumper, dump);
-  ev_prepare_start(EV_DEFAULT_UC_ &dumper);
-  ev_unref(EV_DEFAULT_UC);
-
-  dump_queue = Persistent<Object>::New(Object::New());
-  target->Set(String::NewSymbol("dumpQueue"), dump_queue);
 }
 
 }  // namespace node
