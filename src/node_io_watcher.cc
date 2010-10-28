@@ -174,6 +174,30 @@ Handle<Value> IOWatcher::Set(const Arguments& args) {
 
 #define KB 1024
 
+/*
+ * A large javascript object structure is built up in net.js. The function
+ * Dump is called at the end of each iteration, before select() is called,
+ * to push all the data out to sockets.
+ *
+ * The structure looks like this:
+ *
+ * IOWatcher.dumpQueue -> W -> W -> W -> W
+ *                        |    |    |    |
+ *                        o    o    o    o
+ *                        |    |         |
+ *                        o    o         o
+ *                             |         |
+ *                             o         o
+ *                                       |
+ *                                       o
+ *
+ * Where the 'W' nodes are IOWatcher instances associated with a particular
+ * socket. The 'o' nodes are little javascript objects with a 'data'
+ * member. 'data' is either a string or buffer. E.G.
+ *   o = { data: "hello world" }
+ *
+ */
+
 void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
   assert(revents == EV_PREPARE);
   assert(watcher == &dumper);
@@ -287,7 +311,7 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
       assert(!data_v.IsEmpty());
 
       // At the moment we're turning all string into buffers
-      // so we assert that this is not a string. However, when the 
+      // so we assert that this is not a string. However, when the
       // "Pointer patch" lands, this assert will need to be removed.
       assert(!data_v->IsString());
       // When the "Pointer patch" lands, we will need to be careful
@@ -311,7 +335,7 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
         }
       } else {
         // not first
-        
+
         if (static_cast<size_t>(written) < bucket_len) {
           // Didn't write the whole bucket.
           writer_node->Set(offset_sym,
@@ -343,13 +367,13 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
 
       // Drop the writer_node from the list.
       writer_node_last->Set(next_sym, writer_node->Get(next_sym));
-      
+
       // Emit drain event!
-      
+
     } else {
       io->Start();
       // current->next = new_write_queue->next
-     
+
       // new_write_queue->next = current
     }
 
