@@ -230,7 +230,10 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
     // Offset is only so large as the first buffer of data
     // this occurs when a previous writev could not entirely flush
     // a bucket.
-    size_t offset = writer_node->Get(offset_sym)->Uint32Value();
+    size_t offset = 0;
+    if (writer_node->Has(offset_sym)) {
+      offset = writer_node->Get(offset_sym)->Uint32Value();
+    }
 
     // Loop over all the buckets for this particular socket.
     Local<Value> bucket_v;
@@ -270,6 +273,7 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
         iov[iovcnt].iov_base = Buffer::Data(buf_object);
         iov[iovcnt].iov_len = l;
       }
+      iovcnt++;
 
       first = false; // ugly
     }
