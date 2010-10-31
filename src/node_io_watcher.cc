@@ -24,7 +24,7 @@ Persistent<String> callback_symbol;
 static Persistent<String> next_sym;
 static Persistent<String> data_sym;
 static Persistent<String> offset_sym;
-static Persistent<String> queue_sym;
+static Persistent<String> buckets_sym;
 
 
 void IOWatcher::Initialize(Handle<Object> target) {
@@ -45,7 +45,7 @@ void IOWatcher::Initialize(Handle<Object> target) {
   callback_symbol = NODE_PSYMBOL("callback");
 
   next_sym = NODE_PSYMBOL("next");
-  queue_sym = NODE_PSYMBOL("queue");
+  buckets_sym = NODE_PSYMBOL("buckets");
   offset_sym = NODE_PSYMBOL("offset");
   data_sym = NODE_PSYMBOL("data");
 
@@ -198,6 +198,12 @@ Handle<Value> IOWatcher::Set(const Arguments& args) {
  *
  */
 
+#define DEBUG_PRINT(fmt,...) do {  \
+  fprintf(stderr, "%s:%d ",  __FILE__, __LINE__); \
+  fprintf(stderr, fmt "\n", ##__VA_ARGS__);  \
+} while (0)
+
+
 void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
   assert(revents == EV_PREPARE);
   assert(watcher == &dumper);
@@ -215,7 +221,7 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
   Local<Object> writer_node_last = Local<Object>::New(dump_queue);
 
   for (writer_node_v = dump_queue->Get(next_sym);
-       !writer_node_v.IsEmpty();
+       writer_node_v->IsObject();
        writer_node_v = writer_node->Get(next_sym),
        writer_node_last = writer_node) {
 
@@ -239,8 +245,8 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
     Local<Value> bucket_v;
     Local<Object> bucket;
     bool first = true;
-    for (bucket_v = writer_node->Get(queue_sym);
-         !bucket_v.IsEmpty() && to_write < 64*KB && iovcnt < IOV_SIZE;
+    for (bucket_v = writer_node->Get(buckets_sym);
+         bucket_v->IsObject() && to_write < 64*KB && iovcnt < IOV_SIZE;
          bucket_v = bucket->Get(next_sym)) {
       bucket = bucket_v->ToObject();
 
@@ -281,6 +287,7 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
     IOWatcher *io = ObjectWrap::Unwrap<IOWatcher>(writer_node);
 
     ssize_t written = writev(io->watcher_.fd, iov, iovcnt);
+    DEBUG_PRINT("written: %ld", written);
 
     if (written < 0) {
       switch (errno) {
@@ -305,11 +312,13 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
 
     // Now drop the buckets that have been written.
     first = true;
-    for (bucket_v = writer_node->Get(queue_sym);
-         !bucket_v.IsEmpty();
+    for (bucket_v = writer_node->Get(buckets_sym);
+         written > 0 && bucket_v->IsObject();
          bucket_v = bucket->Get(next_sym)) {
       bucket = bucket_v->ToObject();
       assert(written > 0);
+
+      DEBUG_PRINT("bucket walk");
 
       Local<Value> data_v = bucket->Get(data_sym);
       assert(!data_v.IsEmpty());
@@ -325,6 +334,8 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
       // serialized onto a buffer.
       size_t bucket_len = Buffer::Length(data_v->ToObject());
 
+      DEBUG_PRINT("bucket len: %ld", bucket_len);
+
       if (first) {
         // Only on the first bucket does the offset matter.
         if (offset + written < bucket_len) {
@@ -335,7 +346,7 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
         } else {
           // We have written the entire bucket, discard it.
           written -= bucket_len - offset;
-          writer_node->Set(queue_sym, bucket->Get(next_sym));
+          writer_node->Set(buckets_sym, bucket->Get(next_sym));
         }
       } else {
         // not first
@@ -348,7 +359,7 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
         } else {
           // Wrote the whole bucket, drop it.
           written -= bucket_len;
-          writer_node->Set(queue_sym, bucket->Get(next_sym));
+          writer_node->Set(buckets_sym, bucket->Get(next_sym));
         }
       }
 
@@ -364,10 +375,11 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
      * to become writable again.
      */
 
-    if (writer_node->Get(queue_sym)->IsUndefined()) {
+    if (writer_node->Get(buckets_sym)->IsUndefined()) {
       // Emptied the queue for this socket.
       // Don't wait for it to become writable.
       io->Stop();
+      DEBUG_PRINT("Stop watcher %d", io->watcher_.fd);
 
       // Drop the writer_node from the list.
       writer_node_last->Set(next_sym, writer_node->Get(next_sym));
@@ -376,6 +388,7 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
 
     } else {
       io->Start();
+      DEBUG_PRINT("Start watcher %d", io->watcher_.fd);
       // current->next = new_write_queue->next
 
       // new_write_queue->next = current
