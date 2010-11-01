@@ -38,6 +38,10 @@ class IOWatcher : ObjectWrap {
   void Start();
   void Stop();
 
+  // stats. TODO: expose to js, add reset() method
+  uint64_t dumps_;
+  ev_tstamp last_dump_;
+
   ev_io watcher_;
 };
 

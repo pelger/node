@@ -286,9 +286,12 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
     }
 
     IOWatcher *io = ObjectWrap::Unwrap<IOWatcher>(writer_node);
+    io->dumps_++;
+    io->last_dump_ = ev_now(EV_DEFAULT_UC);
 
     ssize_t written = writev(io->watcher_.fd, iov, iovcnt);
-    DEBUG_PRINT("written: %ld", written);
+
+    DEBUG_PRINT("iovcnt: %d, to_write: %ld, written: %ld", iovcnt, to_write, written);
 
     if (written < 0) {
       switch (errno) {
@@ -300,6 +303,7 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
 #endif
 
         case EAGAIN:
+          DEBUG_PRINT("EAGAIN");
           io->Start();
           continue;
 
