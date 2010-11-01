@@ -279,6 +279,7 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
         iov[iovcnt].iov_base = Buffer::Data(buf_object);
         iov[iovcnt].iov_len = l;
       }
+      to_write += iov[iovcnt].iov_len;
       iovcnt++;
 
       first = false; // ugly
