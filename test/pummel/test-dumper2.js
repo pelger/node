@@ -13,7 +13,10 @@ child.stdout.on('data', function (d) {
   size += d.length;
 });
 
-child.stderr.pipe(process.stdout, { end: false });
+child.stderr.setEncoding('utf8');
+child.stderr.on('data', function (d) {
+  console.error(d);
+});
 
 child.on('exit', function (status) {
   assert.equal(0, status);

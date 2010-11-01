@@ -25,3 +25,7 @@ setTimeout(function () {
   // In the first 10 ms, we haven't pushed out the data.
   assert.ok(null !==  IOWatcher.dumpQueue.next);
 }, 10);
+
+process.on('exit', function () {
+  assert.ok(!IOWatcher.dumpQueue.next);
+});
