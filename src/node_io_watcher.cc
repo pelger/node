@@ -198,6 +198,9 @@ Handle<Value> IOWatcher::Set(const Arguments& args) {
  *
  */
 
+// To enable this debug output, do:
+//   echo "CPPFLAGS += -DDUMP_DEBUG" >> config.mak
+//   make clean all
 #ifdef DUMP_DEBUG
 #define DEBUG_PRINT(fmt,...) do {  \
   fprintf(stderr, "%s:%d ",  __FILE__, __LINE__); \
