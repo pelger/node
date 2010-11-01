@@ -15,11 +15,11 @@ for (var i = 0; i < mb; i++) {
 IOWatcher.dumpQueue.next = w;
 var bucket = w.buckets = { data: b };
 
-for (var i = 0; i < 500; i++) {
+for (var i = 0; i < 50; i++) {
   bucket = bucket.next = { data: b };
 }
 
-/* Total size 500*(1024*1024) = 524288000 */
+/* Total size 50*(1024*1024) = 524288000 */
 
 setTimeout(function () {
   // In the first 10 ms, we haven't pushed out the data.

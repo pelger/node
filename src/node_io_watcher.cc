@@ -198,10 +198,14 @@ Handle<Value> IOWatcher::Set(const Arguments& args) {
  *
  */
 
+#ifdef DUMP_DEBUG
 #define DEBUG_PRINT(fmt,...) do {  \
   fprintf(stderr, "%s:%d ",  __FILE__, __LINE__); \
   fprintf(stderr, fmt "\n", ##__VA_ARGS__);  \
 } while (0)
+#else
+#define DEBUG_PRINT(fmt,...)
+#endif
 
 
 void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
@@ -227,6 +231,13 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
 
     writer_node = writer_node_v->ToObject();
 
+    IOWatcher *io = ObjectWrap::Unwrap<IOWatcher>(writer_node);
+    // stats (just for fun)
+    io->dumps_++;
+    io->last_dump_ = ev_now(EV_DEFAULT_UC);
+
+    DEBUG_PRINT("Dumping %d", io->watcher_.fd);
+
     // Number of items we've stored in iov
     int iovcnt = 0;
     // Number of bytes we've stored in iov
@@ -245,9 +256,10 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
     Local<Value> bucket_v;
     Local<Object> bucket;
     bool first = true;
+    unsigned int bucket_index = 0;
     for (bucket_v = writer_node->Get(buckets_sym);
          bucket_v->IsObject() && to_write < 64*KB && iovcnt < IOV_SIZE;
-         bucket_v = bucket->Get(next_sym)) {
+         bucket_v = bucket->Get(next_sym), bucket_index++) {
       bucket = bucket_v->ToObject();
 
       Local<Value> data_v = bucket->Get(data_sym);
@@ -285,10 +297,6 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
       first = false; // ugly
     }
 
-    IOWatcher *io = ObjectWrap::Unwrap<IOWatcher>(writer_node);
-    io->dumps_++;
-    io->last_dump_ = ev_now(EV_DEFAULT_UC);
-
     ssize_t written = writev(io->watcher_.fd, iov, iovcnt);
 
     DEBUG_PRINT("iovcnt: %d, to_write: %ld, written: %ld", iovcnt, to_write, written);
@@ -317,13 +325,13 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
 
     // Now drop the buckets that have been written.
     first = true;
+    bucket_index = 0;
+
     for (bucket_v = writer_node->Get(buckets_sym);
          written > 0 && bucket_v->IsObject();
-         bucket_v = bucket->Get(next_sym)) {
+         bucket_v = bucket->Get(next_sym), bucket_index++) {
       bucket = bucket_v->ToObject();
       assert(written > 0);
-
-      DEBUG_PRINT("bucket walk");
 
       Local<Value> data_v = bucket->Get(data_sym);
       assert(!data_v.IsEmpty());
@@ -339,16 +347,23 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
       // serialized onto a buffer.
       size_t bucket_len = Buffer::Length(data_v->ToObject());
 
-      DEBUG_PRINT("bucket len: %ld", bucket_len);
+      DEBUG_PRINT("%ld bucket len: %ld", bucket_index, bucket_len);
 
       if (first) {
         // Only on the first bucket does the offset matter.
         if (offset + written < bucket_len) {
           // we have not written the entire first bucket
+          DEBUG_PRINT("%ld Only wrote part of the first buffer. "
+                      "setting watcher.offset = %ld",
+                      bucket_index,
+                      offset + written);
+
           writer_node->Set(offset_sym,
                           Integer::NewFromUnsigned(offset + written));
           break;
         } else {
+          DEBUG_PRINT("%ld wrote the whole first bucket. discarding.",
+                      bucket_index);
           // We have written the entire bucket, discard it.
           written -= bucket_len - offset;
           writer_node->Set(buckets_sym, bucket->Get(next_sym));
@@ -358,11 +373,17 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
 
         if (static_cast<size_t>(written) < bucket_len) {
           // Didn't write the whole bucket.
+          DEBUG_PRINT("%ld Only wrote part of the buffer. "
+                      "setting watcher.offset = %ld",
+                      bucket_index,
+                      offset + written);
           writer_node->Set(offset_sym,
                           Integer::NewFromUnsigned(written));
           break;
         } else {
           // Wrote the whole bucket, drop it.
+          DEBUG_PRINT("%ld wrote the whole bucket. discarding.", bucket_index);
+          written -= bucket_len - offset;
           written -= bucket_len;
           writer_node->Set(buckets_sym, bucket->Get(next_sym));
         }
@@ -393,12 +414,11 @@ void IOWatcher::Dump(EV_P_ ev_prepare *watcher, int revents) {
 
     } else {
       io->Start();
-      DEBUG_PRINT("Start watcher %d", io->watcher_.fd);
+      DEBUG_PRINT("Started watcher %d", io->watcher_.fd);
       // current->next = new_write_queue->next
 
       // new_write_queue->next = current
     }
-
   }
 }
 
